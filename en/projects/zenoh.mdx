@@ -3,6 +3,32 @@ title: 'Zenoh'
 description: 'Point-to-point and networked communication with Zenoh on T3 Gemstone O1 boards'
 ---
 
+## About Zenoh
+
+### What is it?
+
+Zenoh is a communication protocol / middleware software developed in the Rust programming language. A version
+developed in the C programming language is also available for microcontrollers with low processing power. It brings
+different communication and data-management needs — publisher/subscriber, request/response, and query/storage — together under a single interface (API) that operates with low latency and minimal overhead.
+
+### Why?
+
+Because of the nature of the language it is developed in, Zenoh offers a structure that is better protected against
+memory leaks, which provides a much safer development experience in an environment where the developer works
+intensively with direct memory addresses. Zenoh offers asynchronous and brokerless architecture options, allowing
+you to achieve efficiency by choosing the method appropriate to your current scenario.
+
+### How?
+
+In robotics projects, Zenoh can be used to provide communication between different hardware and software components.
+For example, consider a scenario with a camera sensor, a T3 Gemstone board, and a local image-processing model
+running on the board. In this scenario, the data sent by the camera can be published to the network as a topic
+named /camera, and the local image-processing model can subscribe to this topic to consume the data.
+
+<Frame caption="How Zenoh routes data between the camera sensor and a local subscriber model on the T3 Gemstone board.">
+  <img src="/images/zenoh_working_logic_simplified_en.png" />
+</Frame>
+
 ## 1. Overview
 
 This guide explains how to set up [Zenoh](https://zenoh.io) pub/sub communication on T3 Gemstone O1 boards, using the
@@ -327,8 +353,7 @@ Congratulations! Your R5F core and A53 core is successfully communicating!
 ## 4. Part 2: Chain Communication Across a WiFi Network
 
 This example scenario covers how to create a 5-node communication bridge between 2 separate TI AM67A processors' R5F cores across a
-WiFi network. 2 T3 Gemstone O1 boards and a computer are used in this guide. The OS used on the computer is Ubuntu
-22.04.
+WiFi network. 2 T3 Gemstone O1 boards and a computer are used in this guide.
 
 <Frame caption="Visualization of the following example.">
   <img src="/images/zenoh_part2_data_flow.png" />

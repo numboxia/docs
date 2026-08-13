@@ -1,0 +1,438 @@
+---
+title: 'Zenoh'
+description: 'Point-to-point and networked communication with Zenoh on T3 Gemstone O1 boards'
+---
+
+## 1. Overview
+
+This guide explains how to set up [Zenoh](https://zenoh.io) pub/sub communication on T3 Gemstone O1 boards, using the
+`zenoh-pico` implementation.
+
+- **Part 1** covers building and deploying Zenoh's R5F (real-time core) and Linux-side binaries so the R5F and A53 cores
+on a single board can communicate with each other over IPC (`rpmsg`).
+- **Part 2** extends that setup into a WiFi-networked chain scenario, bridging multiple boards through Zenoh routers.
+
+## 2. Prerequisites
+
+Ensure the following dependencies are installed with the exact versions specified:
+
+- **MCU+ SDK (J722S)**: 11.02.01 — [Download](https://www.ti.com/tool/PROCESSOR-SDK-J722S?keyMatch=J722S&tisearch=universal_search&cf-designResources=Software%20design#downloads)
+- **TI ARM Clang**: 3.2.2.LTS — [Download](https://www.ti.com/tool/ARM-CGT?keyMatch=ARM%20CGT%20CLANG&tisearch=universal_search&cf-designResources=Software%20design#downloads)
+- **TI SysConfig**: ≥ 1.26.2 (tested: 1.28.0) — [Download](https://www.ti.com/tool/SYSCONFIG?keyMatch=TI%20Sysconfig&tisearch=universal_search&cf-designResources=Software%20design#downloads)
+- **CMake**: ≥ 3.20
+
+<Note>
+The TI MCU+ SDK, ARM Clang, and SysConfig tools can be downloaded from Texas Instruments's official website. ARM Clang
+and SysConfig have standalone installers, while the MCU+ SDK can be directly extracted from the downloaded tar.gz
+archive. The default installation path is `/opt/ti`.
+</Note>
+<Note>
+Download the SDK if you haven't already: [docs.t3gemstone.org/en/sdk/introduction](https://docs.t3gemstone.org/en/sdk/introduction)
+</Note>
+<Warning>
+The Host Machine that is used to create this guide was operating on Ubuntu 22.04.
+</Warning>
+
+## 3. Part 1: Point-to-Point Communication over IPC
+
+### 3.1. Downloading the zenoh-pico Source
+
+Download Zenoh's source files to the `[path_to_your_sdk_parent_folder]/sdk` directory. We will use this directory to
+host and compile the repositories.
+
+```bash
+cd [path_to_your_sdk_parent_folder]/sdk
+git clone https://github.com/t3gemstone/zenoh-pico
+cd zenoh-pico
+```
+
+### 3.2. Build Steps for Ethernet Mode (On Host Machine)
+
+These steps detail how to compile Zenoh's R5F firmware binaries for Ethernet mode.
+
+#### 3.2.1. Generating SysConfig Files
+
+```bash
+/opt/ti/sysconfig_1.28.0/sysconfig_cli.sh \
+  -s /opt/ti/mcu_plus_sdk_j722s_11_02_01_05/.metadata/product.json \
+  -o examples/ti_am67a/syscfg \
+  examples/ti_am67a/example.syscfg
+```
+
+#### 3.2.2. CMake Configuration
+
+```bash
+cmake -B build \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
+  -DCGT_TI_ARM_CLANG_PATH=/opt/ti/ti-cgt-armllvm_3.2.2.LTS \
+  -DZP_PLATFORM=ti_am67a \
+  -DBUILD_EXAMPLES=ON \
+  -DCMAKE_BUILD_TYPE=Release
+```
+
+#### 3.2.3. Build
+
+```bash
+cmake --build build --target examples -j$(nproc)
+```
+
+<Note>
+You might encounter a warning or error regarding strict compiler rules depending on your environment flags.
+</Note>
+
+### 3.3. Build Steps for IPC Mode (On Host Machine)
+
+These steps detail how to compile Zenoh's R5F firmware binaries for IPC mode.
+
+#### 3.3.1. Generating SysConfig Files
+
+```bash
+/opt/ti/sysconfig_1.28.0/sysconfig_cli.sh \
+  -s /opt/ti/mcu_plus_sdk_j722s_11_02_01_05/.metadata/product.json \
+  -o examples/ti_am67a/syscfg_ipc \
+  examples/ti_am67a/example_ipc.syscfg
+```
+
+#### 3.3.2. CMake Configuration
+
+```bash
+cmake -B build \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
+  -DCGT_TI_ARM_CLANG_PATH=/opt/ti/ti-cgt-armllvm_3.2.2.LTS \
+  -DZP_PLATFORM=ti_am67a \
+  -DZENOH_TI_AM67A_IPC=ON \
+  -DBUILD_EXAMPLES=ON \
+  -DCMAKE_BUILD_TYPE=Release
+```
+
+#### 3.3.3. Build
+
+```bash
+cmake --build build --target examples -j$(nproc)
+```
+
+### 3.4. Building rpmsg_net Kernel Modules (In Build Container)
+
+The Remote Processor Messaging (rpmsg) framework allows a main processor running Linux to communicate with
+coprocessors (such as the R5F cores) via shared memory. For more details, check out the official kernel
+documentation: [docs.kernel.org/staging/rpmsg.html](https://docs.kernel.org/staging/rpmsg.html)
+
+These steps cover how to cross-compile the rpmsg_net kernel modules for the T3 Gemstone O1 target board.
+Cross-compiling is preferred because compiling kernel modules natively on the board solely for the headers is
+time-prohibitive. By replicating the environment where the Gemstone O1's 6.12.24-ti kernel was compiled, we avoid
+version conflicts with the target's kernel.
+
+#### 3.4.1. Preparing the Build Environment
+
+First, navigate to the parent directory of your SDK:
+
+```bash
+cd [path_to_your_sdk_parent_folder]/sdk
+devbox shell
+task box
+m:oeinit t3-gem-o1
+bitbake -c devshell virtual/kernel
+```
+
+<Note>
+This initialization may take an extended amount of time during the first execution.
+</Note>
+
+#### 3.4.2. Obtaining the .config File (On Target Board)
+
+Execute the following on the T3 Gemstone O1 target board:
+
+```bash
+zcat /proc/config.gz > running.config
+```
+
+This extracts the current kernel configuration to a `running.config` file. Transfer this file to your host machine
+(e.g., via SCP, SSH, or a USB drive).
+
+Once transferred, copy this file into your SDK folder. The SDK folder is mounted directly to your Distrobox container
+environment as `distrobox:workdir`. This means the file is instantly accessible from within the container without
+further copying.
+
+#### 3.4.3. Compiling Linux Kernel Headers (In Build Container)
+
+Inside the `distrobox:workdir` container, directly clone the specific kernel branch to save time:
+
+```bash
+git clone --depth 1 -b v6.12.24-ti-arm64-r43-t3-gem-o1 https://github.com/t3gemstone/linux.git
+cd linux
+```
+
+Assuming the `running.config` file is located in the `distrobox:workdir` root, run:
+
+```bash
+cp ../running.config .config
+```
+
+Proceed to build the kernel headers:
+
+```bash
+env | grep -i kbuild
+unset KBUILD_OUTPUT
+make ARCH=arm64 olddefconfig
+make ARCH=arm64 modules_prepare
+```
+
+#### 3.4.4. Compiling rpmsg_net
+
+Execute these commands in the `distrobox:workdir` root:
+
+```bash
+git clone https://github.com/t3gemstone/rpmsg-net
+cd rpmsg-net
+make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE KERNEL_SRC=/home/workdir/linux-6.12.24-ti-arm64-r43-t3-gem-o1 KBUILD_MODPOST_WARN=1
+```
+
+If the previous command fails due to toolchain pathing, utilize the explicit path:
+
+```bash
+make ARCH=arm64 CROSS_COMPILE=aarch64-gemstone-linux-musl- -C /home/workdir/build/tmp-musl/work/t3_gem_o1-gemstone-linux-musl/linux-t3-gem-o1-rt/6.12.24+git/build M=$(pwd) modules
+```
+
+Upon completion, the `rpmsg_net.ko` module will be generated.
+
+### 3.5. Compiling Zenoh for the Linux Side (In Build Container)
+
+These steps detail how to cross-compile the Zenoh executables for the A53 core.
+
+#### 3.5.1. Multicast Buffer Adjustment
+
+To prevent packet fragmentation and communication failures over IPC, a configuration parameter in
+`zenoh-pico/CMakeLists.txt` must be patched. Locate the following line:
+
+```cmake
+set(BATCH_MULTICAST_SIZE 2048 CACHE STRING "Use this to override the maximum multicast batch size")
+```
+
+Change the value `2048` to `128`.
+
+The default multicast batch size in Zenoh is 2048 bytes. However, the Maximum Transmission Unit (MTU) of the `rpmsg0`
+interface is limited to 479 bytes (which can be observed by running `ip a` on the board). If the batch size exceeds
+this MTU, packets will be dropped or fragmented. Lowering the batch size to 128 ensures all payloads fit safely
+within the MTU limit.
+
+#### 3.5.2. CMake Configuration
+
+Execute these commands from the `distrobox:workdir` container:
+
+```bash
+cd zenoh-pico
+unset CFLAGS CXXFLAGS LDFLAGS CPPFLAGS CC CXX
+cmake -B build_linux_aarch64 \
+  -DCMAKE_SYSTEM_NAME=Linux \
+  -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+  -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_EXAMPLES=ON \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_EXE_LINKER_FLAGS="-static" \
+  -DZP_PLATFORM=linux
+```
+
+#### 3.5.3. Build
+
+```bash
+cmake --build build_linux_aarch64 --target examples -j$(nproc)
+```
+
+These commands will generate the required binaries in the `build_linux_aarch64/examples` directory.
+
+### 3.6. Deploying Compiled Binaries to the Target (On Host)
+
+As previously established, the `distrobox:workdir` directory is mounted directly to the SDK folder on your host
+machine. You can locate the compiled binaries on your host and transfer them to the target board via SCP or your
+preferred method. Deploy the following files:
+
+**Zenoh R5F Firmware**
+- `zenoh-pico/build/examples/ti_am67a/z_pub.out`
+
+**Zenoh A53 Executable**
+- `zenoh-pico/build_linux_aarch64/examples/z_sub`
+
+**rpmsg_net Kernel Modules**
+- `rpmsg-net/rpmsg_net.ko`
+
+### 3.7. Configuring the Target Environment (On Target Board)
+
+First, we will deploy the Zenoh R5F IPC variant firmware (in this example, the publisher will reside in the R5F core).
+
+Assuming the transferred binaries are located in your target's home directory, copy the firmware:
+
+```bash
+sudo cp z_pub.out /lib/firmware/
+```
+
+<Note>
+/lib/firmware is the hard-coded directory where the kernel firmware loader checks for firmware binaries when it receives a filename.
+</Note>
+
+Load the rpmsg_net module into the kernel:
+
+```bash
+sudo insmod rpmsg_net.ko
+```
+
+Initialize the rpmsg0 module as a network interface:
+
+```bash
+sudo sh -c 'echo z_pub.out > /sys/class/remoteproc/remoteproc3/firmware'
+sudo sh -c 'echo start > /sys/class/remoteproc/remoteproc3/state'
+```
+
+Configure the network settings for the interface:
+
+```bash
+sudo ip addr add 192.168.200.2/30 dev rpmsg0
+sudo ip link set rpmsg0 up
+sudo ip link set rpmsg0 multicast on
+```
+
+If you are utilizing peer mode (as demonstrated in this example), add the multicast routing rule:
+
+```bash
+sudo ip route add 224.0.0.0/4 dev rpmsg0
+```
+
+This command explicitly directs all multicast traffic (the `224.0.0.0/4` IP block) to be routed through the `rpmsg0`
+network interface. Zenoh relies on multicast for peer-to-peer discovery across the IPC link.
+
+### 3.8. Testing (On Target Board)
+
+Open two separate terminal sessions on the target board.
+
+In Terminal 1 (Subscriber), execute:
+
+```bash
+./z_sub -m peer -l "udp/224.0.0.224:7446#iface=rpmsg0" -k "t3/pub/data"
+```
+
+In Terminal 2, execute:
+
+```bash
+sudo cat /sys/kernel/debug/remoteproc/remoteproc3/trace0
+```
+
+If you see an output like this:
+
+```bash
+'Hello from TI AM67A R5F!'
+```
+
+Congratulations! Your R5F core and A53 core is successfully communicating!
+
+## 4. Part 2: Chain Communication Across a WiFi Network
+
+This example scenario covers how to create a 5-node communication bridge between 2 separate TI AM67A processors' R5F cores across a
+WiFi network. 2 T3 Gemstone O1 boards and a computer are used in this guide. The OS used on the computer is Ubuntu
+22.04.
+
+<Frame caption="Visualization of the following example.">
+  <img src="/images/zenoh_part2_data_flow.png" />
+</Frame>
+
+### 4.1. Before Starting
+
+We have to make a few changes in the source code for this to work. Assuming you still have the exact same work
+directory from Part 1:
+
+- `[path_to_your_sdk_parent_folder]/sdk/zenoh-pico/examples/ti_am67a/z_sub.c`
+- `[path_to_your_sdk_parent_folder]/sdk/zenoh-pico/examples/ti_am67a/z_pub.c`
+
+Open these files and make sure these lines are like this for both of them:
+
+```c
+#define CLIENT_OR_PEER 0
+#if CLIENT_OR_PEER == 0
+#define ZENOH_MODE "client"
+#define ZENOH_LOCATOR "udp/192.168.200.2:7447"
+```
+
+Now compile the Zenoh firmwares and send the `z_sub.out` to one of the boards you have. That will be your subscriber
+board. Send `z_pub.out` to the other board and that will be your publisher board. Check [Part 1](#3-part-1-point-to-point-communication-over-ipc) for the detailed compiling guide.
+
+### 4.2. Downloading and Extracting Zenoh Routers
+
+Download and unzip the 1.9.0 version that suits your computer from this repository:
+[github.com/eclipse-zenoh/zenoh/releases](https://github.com/eclipse-zenoh/zenoh/releases)
+
+After that, you can execute these commands on both of your T3 Gemstone O1 boards to directly download the correct
+Zenoh version:
+
+```bash
+wget https://github.com/eclipse-zenoh/zenoh/releases/download/1.9.0/zenoh-1.9.0-aarch64-unknown-linux-gnu-standalone.zip
+unzip zenoh-1.9.0-aarch64-unknown-linux-gnu-standalone.zip
+```
+
+### 4.3. Waking Up the Whole Setup
+
+<Warning>
+Before going forward, please allow your boards' IP addresses through your computer's firewall. Otherwise, your
+firewall won't pass the Zenoh packages over the network.
+</Warning>
+
+**Starting the Router on the Computer**
+
+First, on your computer, go into the folder you downloaded from the github repository. Then execute this command:
+
+```bash
+./zenohd -l tcp/0.0.0.0:7447
+```
+
+#### 4.3.1. Starting the Publisher Board
+
+Execute these commands to wake up the Zenoh Router:
+
+```bash
+cd zenoh-1.9.0-aarch64-unknown-linux-gnu-standalone/
+./zenohd -l udp/0.0.0.0:7447 -e tcp/<YOUR_COMPUTER_IP>:7447
+```
+
+Now start the publisher firmware (`z_pub.out`):
+
+```bash
+sudo insmod /home/gemstone/rpmsg_net.ko
+sudo sh -c 'echo z_pub.out > /sys/class/remoteproc/remoteproc3/firmware'
+sudo sh -c 'echo start > /sys/class/remoteproc/remoteproc3/state'
+sudo ip addr add 192.168.200.2/30 dev rpmsg0
+sudo ip link set rpmsg0 up
+```
+
+#### 4.3.2. Starting the Subscriber Board
+
+Execute these commands to wake up the Zenoh Router:
+
+```bash
+cd zenoh-1.9.0-aarch64-unknown-linux-gnu-standalone/
+./zenohd -l udp/0.0.0.0:7447 -e tcp/<YOUR_COMPUTER_IP>:7447
+```
+
+Now start the subscriber (`z_sub.out`) firmware:
+
+```bash
+sudo insmod /home/gemstone/rpmsg_net.ko
+sudo sh -c 'echo z_sub.out > /sys/class/remoteproc/remoteproc3/firmware'
+sudo sh -c 'echo start > /sys/class/remoteproc/remoteproc3/state'
+sudo ip addr add 192.168.200.2/30 dev rpmsg0
+sudo ip link set rpmsg0 up
+```
+
+### 4.4. Verification
+
+Now we can verify if the system is working or not by running this command on the subscriber board:
+
+```bash
+sudo cat /sys/kernel/debug/remoteproc/remoteproc3/trace0
+```
+
+This command shows the logs of the Zenoh R5F firmwares. If you see:
+
+```
+'Hello from TI AM67A R5F!'
+```
+
+message in your terminal, congratulations! Your publisher board's R5F core successfully created that message
+and that message went over 3 Zenoh clients and was finally received by the subscriber's R5F core!

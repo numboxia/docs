@@ -341,6 +341,7 @@
               "en/projects/mediabox",
               "en/projects/firewall",
               "en/projects/hotspot",
+              "en/projects/zenoh",
               {
                 "group": "Teknofest",
                 "pages": [

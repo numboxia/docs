@@ -1,0 +1,451 @@
+---
+title: 'Zenoh'
+description: 'T3 Gemstone O1 kartlarında Zenoh ile noktadan noktaya ve ağ üzerinden haberleşme'
+---
+
+## Zenoh Hakkında
+
+### Nedir?
+
+Zenoh Rust programlama dili ile geliştirilmiş bir haberleşme protokolü / ara katman(middleware) yazılımıdır. İşlem gücü düşük olan mikrokontrolcüler için C programlama dili ile geliştirilmiş bir versiyonu da mevcuttur. Farklı haberleşme ve veri yönetimi ihtiyaçlarını publisher/subscriber, request/response, query/storage düşük bir gecikme ve minimum ek yük(overhead) ile çalışma imkanı sağlayan tek bir arayüz(API) altında toplamaktadır.
+
+### Neden?
+
+Zenoh, geliştirildiği dilin doğası sebebiyle bellek sızıntılarına karşı daha korumalı bir yapı sunar, bu da geliştiricinin yoğun bir şekilde doğrudan bellek adreslerine erişerek geliştirme yaptığı bir ortamda çok daha güvenli bir geliştirme imkanı sağlar. Zenoh asenkron(asynchronous) ve aracısız (brokerless) mimari seçenekleri sunar, bu sayede mevcut senaryoya göre uygun yöntem seçerek verim elde edebilirsiniz.
+
+### Nasıl?
+
+Zenoh robotik projelerinde, farklı donanımlar ve yazılımlar arasında bir haberleşme sağlamak için kullanılabilir. Örneğin; kamera sensörü, T3 Gemstone kartı ve kart içerisinde çalışan bir lokal görüntü işleme modelinin olduğu bir senaryo düşünelim. Bu senaryoda, kameranın gönderdiği verileri /camera şeklinde bir topic(başlık) verisi halinde ağa yayınlayıp, lokal görüntü işleme modelinin bu başlığa abone olarak veriyi kullanması sağlanabilir.
+
+<Frame caption="Zenoh'un, kamera sensörü ile T3 Gemstone kartındaki lokal subscriber modeli arasında veriyi nasıl yönlendirdiği.">
+  <img src="/images/zenoh_working_logic_simplified_tr.png" />
+</Frame>
+
+## 1. Genel Bakış
+
+Bu kılavuz, `zenoh-pico` implementasyonu kullanılarak T3 Gemstone O1 kartlarında [Zenoh](https://zenoh.io) pub/sub
+haberleşmesinin nasıl kurulacağını anlatır.
+
+- **Bölüm 1**, aynı kart üzerindeki R5F ve A53 çekirdeklerinin IPC (`rpmsg`) üzerinden birbiriyle haberleşebilmesi
+için Zenoh'un R5F (gerçek zamanlı çekirdek) ve Linux tarafı binary dosyalarının derlenmesini ve dağıtılmasını kapsar.
+- **Bölüm 2**, bu kurulumu WiFi ağı üzerinden bir zincir haberleşme senaryosuna genişletir ve birden fazla kartı
+Zenoh router'ları aracılığıyla birbirine bağlar.
+
+## 2. Ön Koşullar
+
+Aşağıdaki bağımlılıkların belirtilen tam sürümlerle kurulu olduğundan emin olun:
+
+- **MCU+ SDK (J722S)**: 11.02.01 — [İndir](https://www.ti.com/tool/PROCESSOR-SDK-J722S?keyMatch=J722S&tisearch=universal_search&cf-designResources=Software%20design#downloads)
+- **TI ARM Clang**: 3.2.2.LTS — [İndir](https://www.ti.com/tool/ARM-CGT?keyMatch=ARM%20CGT%20CLANG&tisearch=universal_search&cf-designResources=Software%20design#downloads)
+- **TI SysConfig**: ≥ 1.26.2 (test edilen: 1.28.0) — [İndir](https://www.ti.com/tool/SYSCONFIG?keyMatch=TI%20Sysconfig&tisearch=universal_search&cf-designResources=Software%20design#downloads)
+- **CMake**: ≥ 3.20
+
+<Note>
+TI MCU+ SDK, ARM Clang ve SysConfig araçları Texas Instruments'ın resmi web sitesinden indirilebilir. ARM Clang ve
+SysConfig için bağımsız (standalone) kurulum dosyaları mevcutken, MCU+ SDK indirilen tar.gz arşivinden doğrudan
+çıkarılabilir. Varsayılan kurulum dizini `/opt/ti`'dir.
+</Note>
+<Note>
+Henüz indirmediyseniz SDK'yı indirin: [docs.t3gemstone.org/en/sdk/introduction](https://docs.t3gemstone.org/en/sdk/introduction)
+</Note>
+<Warning>
+Bu kılavuzun oluşturulmasında kullanılan bilgisayar Ubuntu 22.04 üzerinde çalışıyordu.
+</Warning>
+
+## 3. Bölüm 1: IPC Üzerinden Noktadan Noktaya Haberleşme
+
+### 3.1. zenoh-pico Kaynak Kodunun İndirilmesi
+
+Zenoh'un kaynak dosyalarını `[ust_dizinin_konumu]/sdk` dizinine indirin. Bu dizini kaynak dosyalarını
+barındırmak ve derlemek için kullanacağız.
+
+```bash
+cd [ust_dizinin_konumu]/sdk
+git clone https://github.com/t3gemstone/zenoh-pico
+cd zenoh-pico
+```
+
+### 3.2. Ethernet Modu için Derleme Adımları (Host Machine Üzerinde)
+
+Bu adımlar, Zenoh'un Ethernet modu için R5F firmware binary dosyalarının nasıl derleneceğini ayrıntılı olarak anlatır.
+
+#### 3.2.1. SysConfig Dosyalarının Oluşturulması
+
+```bash
+/opt/ti/sysconfig_1.28.0/sysconfig_cli.sh \
+  -s /opt/ti/mcu_plus_sdk_j722s_11_02_01_05/.metadata/product.json \
+  -o examples/ti_am67a/syscfg \
+  examples/ti_am67a/example.syscfg
+```
+
+#### 3.2.2. CMake Yapılandırması
+
+```bash
+cmake -B build \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
+  -DCGT_TI_ARM_CLANG_PATH=/opt/ti/ti-cgt-armllvm_3.2.2.LTS \
+  -DZP_PLATFORM=ti_am67a \
+  -DBUILD_EXAMPLES=ON \
+  -DCMAKE_BUILD_TYPE=Release
+```
+
+#### 3.2.3. Derleme
+
+```bash
+cmake --build build --target examples -j$(nproc)
+```
+
+<Note>
+Ortam (environment) flag'lerinize bağlı olarak, strict compiler kurallarıyla ilgili bir warning veya error ile
+karşılaşabilirsiniz.
+</Note>
+
+### 3.3. IPC Modu için Derleme Adımları (Ana Bilgisayar Üzerinde)
+
+Bu adımlar, Zenoh'un IPC modu için R5F firmware binary dosyalarının nasıl derleneceğini ayrıntılı olarak anlatır.
+
+#### 3.3.1. SysConfig Dosyalarının Oluşturulması
+
+```bash
+/opt/ti/sysconfig_1.28.0/sysconfig_cli.sh \
+  -s /opt/ti/mcu_plus_sdk_j722s_11_02_01_05/.metadata/product.json \
+  -o examples/ti_am67a/syscfg_ipc \
+  examples/ti_am67a/example_ipc.syscfg
+```
+
+#### 3.3.2. CMake Yapılandırması
+
+```bash
+cmake -B build \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
+  -DCGT_TI_ARM_CLANG_PATH=/opt/ti/ti-cgt-armllvm_3.2.2.LTS \
+  -DZP_PLATFORM=ti_am67a \
+  -DZENOH_TI_AM67A_IPC=ON \
+  -DBUILD_EXAMPLES=ON \
+  -DCMAKE_BUILD_TYPE=Release
+```
+
+#### 3.3.3. Derleme
+
+```bash
+cmake --build build --target examples -j$(nproc)
+```
+
+### 3.4. rpmsg_net Kernel Modüllerinin Derlenmesi (Sanal Makine İçinde)
+
+Remote Processor Messaging (rpmsg) framework'ü, Linux çalıştıran A53 çekirdeklerinin, R5F çekirdekleri gibi
+coprocessor'lerle paylaşımlı bellek üzerinden haberleşmesine olanak tanır. Daha fazla bilgi için resmi kernel
+dokümantasyonuna bakabilirsiniz: [docs.kernel.org/staging/rpmsg.html](https://docs.kernel.org/staging/rpmsg.html)
+
+Bu adımlar, T3 Gemstone O1 hedef kartı için rpmsg_net kernel modüllerinin nasıl çapraz derleme yapılacağını kapsar.
+Sadece header dosyaları için modülleri doğrudan kart üzerinde derlemek çok uzun sürdüğünden, çapraz derleme yöntemi
+tercih edilir. T3 Gemstone O1'in 6.12.24-ti kernel'inin derlendiği ortamı birebir yeniden oluşturarak, hedef kart ile
+sürüm çakışmalarının önüne geçilir.
+
+#### 3.4.1. Derleme Ortamının Hazırlanması
+
+Öncelikle, sanal makinenin içine girin:
+```bash
+cd [ust_dizinin_konumu]/sdk
+devbox shell
+task box
+m:oeinit t3-gem-o1
+bitbake -c devshell virtual/kernel
+```
+
+<Note>
+Bu işlem, ilk çalıştırmada uzunca bir süre alabilir.
+</Note>
+
+#### 3.4.2. .config Dosyasının Elde Edilmesi (Hedef Kart Üzerinde)
+
+Aşağıdakini T3 Gemstone O1 hedef kartı üzerinde çalıştırın:
+
+```bash
+zcat /proc/config.gz > running.config
+```
+
+Bu komut, mevcut kernel yapılandırmasını bir `running.config` dosyasına aktarır. Bu dosyayı ana bilgisayarınıza
+aktarın (örneğin SCP, SSH veya bir USB bellek ile).
+
+Aktarım tamamlandıktan sonra, bu dosyayı SDK klasörünüzün içine kopyalayın. SDK klasörü, Distrobox sanal
+makinenize `distrobox:workdir` olarak doğrudan bağlanmıştır. Bu sayede dosya, tekrar kopyalamaya gerek
+kalmadan sanal makine içinden anında erişilebilir olur.
+
+#### 3.4.3. Linux Kernel Header Dosyalarının Derlenmesi (Sanal Makine İçinde)
+
+`distrobox:workdir` içinde, belirli kernel branch'ini doğrudan klonlayın:
+
+```bash
+git clone --depth 1 -b v6.12.24-ti-arm64-r43-t3-gem-o1 https://github.com/t3gemstone/linux.git
+cd linux
+```
+
+(`running.config` dosyasının `distrobox:workdir` kök dizininde bulunduğunu varsayarak) şunu çalıştırın:
+
+```bash
+cp ../running.config .config
+```
+
+Kernel header dosyalarını derlemeye devam edin:
+
+```bash
+env | grep -i kbuild
+unset KBUILD_OUTPUT
+make ARCH=arm64 olddefconfig
+make ARCH=arm64 modules_prepare
+```
+
+#### 3.4.4. rpmsg_net'in Derlenmesi
+
+Bu komutları `distrobox:workdir` kök dizininde çalıştırın:
+
+```bash
+git clone https://github.com/t3gemstone/rpmsg-net
+cd rpmsg-net
+make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE KERNEL_SRC=/home/workdir/linux-6.12.24-ti-arm64-r43-t3-gem-o1 KBUILD_MODPOST_WARN=1
+```
+
+Önceki komut toolchain yol sorunları nedeniyle başarısız olursa, açık yolu kullanın:
+
+```bash
+make ARCH=arm64 CROSS_COMPILE=aarch64-gemstone-linux-musl- -C /home/workdir/build/tmp-musl/work/t3_gem_o1-gemstone-linux-musl/linux-t3-gem-o1-rt/6.12.24+git/build M=$(pwd) modules
+```
+
+İşlem tamamlandığında, `rpmsg_net.ko` modülü oluşturulacaktır.
+
+### 3.5. Zenoh'un Linux Tarafı için Derlenmesi (Sanal Makine İçinde)
+
+Bu adımlar, Zenoh çalıştırılabilir dosyalarının (executable) A53 çekirdeği için nasıl çapraz derleme yapılacağını
+ayrıntılı olarak anlatır.
+
+#### 3.5.1. Multicast Buffer Ayarı
+
+IPC üzerinde packet fragmentation ve haberleşme hatalarını önlemek için, `zenoh-pico/CMakeLists.txt` içindeki bir
+yapılandırma parametresinin değiştirilmesi gerekir. Aşağıdaki satırı bulun:
+
+```cmake
+set(BATCH_MULTICAST_SIZE 2048 CACHE STRING "Use this to override the maximum multicast batch size")
+```
+
+`2048` değerini `128` olarak değiştirin.
+
+Zenoh'taki varsayılan multicast batch size 2048 byte'tır. Ancak rpmsg0 arayüzünün Maximum Transmission Unit (MTU) değeri 479 byte ile sınırlıdır (kart üzerinde 'ip a' komutu çalıştırılarak görülebilir). Batch size bu MTU değerini aşarsa, paketler düşürülür veya parçalanır. Batch size'ı 128'e indirmek, tüm veri yüklerinin MTU sınırı içine güvenle sığmasını sağlar.
+
+#### 3.5.2. CMake Yapılandırması
+
+Bu komutları `distrobox:workdir` sanal ortamından çalıştırın:
+
+```bash
+cd zenoh-pico
+unset CFLAGS CXXFLAGS LDFLAGS CPPFLAGS CC CXX
+cmake -B build_linux_aarch64 \
+  -DCMAKE_SYSTEM_NAME=Linux \
+  -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+  -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_EXAMPLES=ON \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_EXE_LINKER_FLAGS="-static" \
+  -DZP_PLATFORM=linux
+```
+
+#### 3.5.3. Derleme
+
+```bash
+cmake --build build_linux_aarch64 --target examples -j$(nproc)
+```
+
+Bu komutlar, gerekli binary dosyalarını `build_linux_aarch64/examples` dizininde oluşturacaktır.
+
+### 3.6. Derlenen Binary Dosyalarının Hedefe Aktarılması (Ana Bilgisayar Üzerinde)
+
+Daha önce belirtildiği gibi, `distrobox:workdir` dizini ana bilgisayarınızdaki SDK klasörüne doğrudan bağlanmıştır. Derlenen binary dosyalarını ana bilgisayarınızda bulup SCP veya tercih ettiğiniz bir yöntemle hedef karta
+aktarabilirsiniz. Aşağıdaki dosyaları aktarın:
+
+**Zenoh R5F Firmware**
+- `zenoh-pico/build/examples/ti_am67a/z_pub.out`
+
+**Zenoh A53 Çalıştırılabilir Dosyası**
+- `zenoh-pico/build_linux_aarch64/examples/z_sub`
+
+**rpmsg_net Kernel Modülleri**
+- `rpmsg-net/rpmsg_net.ko`
+
+### 3.7. Hedef Ortamın Yapılandırılması (Hedef Kart Üzerinde)
+
+Öncelikle, Zenoh R5F IPC varyantı firmware'ini olması gereken konuma aktaracağız (bu örnekte publisher, R5F çekirdeğinde yer alacaktır).
+
+(Aktarılan binary dosyalarının hedef kartınızın home dizininde bulunduğunu varsayarak), firmware'i kopyalayın:
+
+```bash
+sudo cp z_pub.out /lib/firmware/
+```
+
+<Note>
+/lib/firmware, kernel firmware loader'ının bir dosya adı aldığında firmware binary dosyalarını kontrol ettiği
+hard-coded dizindir.
+</Note>
+
+rpmsg_net modülünü kernel'e yükleyin:
+
+```bash
+sudo insmod rpmsg_net.ko
+```
+
+rpmsg0 modülünü bir ağ arayüzü olarak tanımlayın:
+
+```bash
+sudo sh -c 'echo z_pub.out > /sys/class/remoteproc/remoteproc3/firmware'
+sudo sh -c 'echo start > /sys/class/remoteproc/remoteproc3/state'
+```
+
+Arayüz için ağ ayarlarını yapılandırın:
+
+```bash
+sudo ip addr add 192.168.200.2/30 dev rpmsg0
+sudo ip link set rpmsg0 up
+sudo ip link set rpmsg0 multicast on
+```
+
+Peer modunu kullanıyorsanız (bu örnekte gösterildiği gibi), multicast routing kuralını ekleyin:
+
+```bash
+sudo ip route add 224.0.0.0/4 dev rpmsg0
+```
+
+Bu komut, tüm multicast trafiğinin (`224.0.0.0/4` IP bloğu) `rpmsg0` ağ arayüzü üzerinden yönlendirilmesini sağlar. Zenoh, IPC bağlantısı üzerinden peer-to-peer discovery için multicast'e dayanır.
+
+### 3.8. Test Etme (Hedef Kart Üzerinde)
+
+Hedef kart üzerinde iki ayrı terminal oturumu açın.
+
+Terminal 1'de (Subscriber), şunu çalıştırın:
+
+```bash
+./z_sub -m peer -l "udp/224.0.0.224:7446#iface=rpmsg0" -k "t3/pub/data"
+```
+
+Terminal 2'de, şunu çalıştırın:
+
+```bash
+sudo cat /sys/kernel/debug/remoteproc/remoteproc3/trace0
+```
+
+Şuna benzer bir çıktı görürseniz:
+
+```bash
+'Hello from TI AM67A R5F!'
+```
+tebrikler! R5F ve A53 çekirdeğiniz başarılı bir iletişim kuruyor!
+
+## 4. Bölüm 2: WiFi Ağı Üzerinden Zincir Haberleşme
+
+Bu örnek senaryo, WiFi ağı üzerinden 2 ayrı TI AM67A işlemcisinin R5F çekirdekleri arasında 5 node'lu bir haberleşme köprüsü oluşturmayı kapsar. Bu kılavuzda 2 adet T3 Gemstone O1 kartı ve bir bilgisayar kullanılmaktadır.
+
+<Frame caption="Aşağıdaki örneğin görselleştirmesi.">
+  <img src="/images/zenoh_part2_data_flow.png" />
+</Frame>
+
+### 4.1. Başlamadan Önce
+
+Bunun çalışması için kaynak kodda birkaç değişiklik yapmamız gerekiyor. Bölüm 1'deki ile tamamen aynı çalışma
+dizinine sahip olduğunuzu varsayarak:
+
+- `[ust_dizinin_konumu]/sdk/zenoh-pico/examples/ti_am67a/z_sub.c`
+- `[ust_dizinin_konumu]/sdk/zenoh-pico/examples/ti_am67a/z_pub.c`
+
+Bu dosyaları açın ve her ikisinde de şu satırların böyle olduğundan emin olun:
+
+```c
+#define CLIENT_OR_PEER 0
+#if CLIENT_OR_PEER == 0
+#define ZENOH_MODE "client"
+#define ZENOH_LOCATOR "udp/192.168.200.2:7447"
+```
+
+Şimdi Zenoh firmware'lerini derleyin ve `z_sub.out` dosyasını elinizdeki kartlardan birine gönderin. Bu, subscriber
+kartınız olacaktır. `z_pub.out` dosyasını diğer karta gönderin, bu da publisher kartınız olacaktır. Ayrıntılı
+derleme kılavuzu için [Bölüm 1](#3-bölüm-1-ipc-üzerinden-noktadan-noktaya-haberleşme)'e bakın.
+
+### 4.2. Zenoh Router'larının İndirilmesi ve Çıkarılması
+
+Ana bilgisayarınıza uygun 1.9.0 sürümünü bu repository'den indirin ve zip dosyasından çıkarın:
+[github.com/eclipse-zenoh/zenoh/releases](https://github.com/eclipse-zenoh/zenoh/releases)
+
+Bunun ardından, doğru Zenoh sürümünü kartınıza doğrudan indirmek için her iki T3 Gemstone O1 kartınızda da şu komutları
+çalıştırabilirsiniz:
+
+```bash
+wget https://github.com/eclipse-zenoh/zenoh/releases/download/1.9.0/zenoh-1.9.0-aarch64-unknown-linux-gnu-standalone.zip
+unzip zenoh-1.9.0-aarch64-unknown-linux-gnu-standalone.zip
+```
+
+### 4.3. Tüm Sistemin Ayağa Kaldırılması
+
+<Warning>
+Devam etmeden önce, lütfen kartlarınızın IP adreslerine bilgisayarınızın firewall'unda izin verin. Aksi takdirde
+firewall'unuz Zenoh paketlerinin ağ üzerinden geçmesine izin vermeyecektir.
+</Warning>
+
+**Router'ın Bilgisayarda Başlatılması**
+
+Öncelikle ana bilgisayarınızda, github repository'sinden indirdiğiniz klasöre gidin. Ardından şu komutu çalıştırın:
+
+```bash
+./zenohd -l tcp/0.0.0.0:7447
+```
+
+#### 4.3.1. Publisher Kartının Başlatılması
+
+Zenoh Router'ı ayağa kaldırmak için şu komutları çalıştırın:
+
+```bash
+cd zenoh-1.9.0-aarch64-unknown-linux-gnu-standalone/
+./zenohd -l udp/0.0.0.0:7447 -e tcp/<ANA_BILGISAYAR_IP>:7447
+```
+
+Şimdi publisher firmware'ini (`z_pub.out`) başlatın:
+
+```bash
+sudo insmod /home/gemstone/rpmsg_net.ko
+sudo sh -c 'echo z_pub.out > /sys/class/remoteproc/remoteproc3/firmware'
+sudo sh -c 'echo start > /sys/class/remoteproc/remoteproc3/state'
+sudo ip addr add 192.168.200.2/30 dev rpmsg0
+sudo ip link set rpmsg0 up
+```
+
+#### 4.3.2. Subscriber Kartının Başlatılması
+
+Zenoh Router'ı ayağa kaldırmak için şu komutları çalıştırın:
+
+```bash
+cd zenoh-1.9.0-aarch64-unknown-linux-gnu-standalone/
+./zenohd -l udp/0.0.0.0:7447 -e tcp/<ANA_BILGISAYAR_IP>:7447
+```
+
+Şimdi subscriber firmware'ini (`z_sub.out`) başlatın:
+
+```bash
+sudo insmod /home/gemstone/rpmsg_net.ko
+sudo sh -c 'echo z_sub.out > /sys/class/remoteproc/remoteproc3/firmware'
+sudo sh -c 'echo start > /sys/class/remoteproc/remoteproc3/state'
+sudo ip addr add 192.168.200.2/30 dev rpmsg0
+sudo ip link set rpmsg0 up
+```
+
+### 4.4. Doğrulama
+
+Şimdi subscriber kart üzerinde şu komutu çalıştırarak sistemin çalışıp çalışmadığını doğrulayabiliriz:
+
+```bash
+sudo cat /sys/kernel/debug/remoteproc/remoteproc3/trace0
+```
+
+Bu komut, Zenoh R5F firmware'lerinin loglarını gösterir. Eğer şunu görürseniz:
+
+```
+'Hello from TI AM67A R5F!'
+```
+tebrikler! Publisher kartınızın R5F çekirdeği bu mesajı başarıyla oluşturdu ve
+bu mesaj 3 Zenoh client'ı üzerinden geçerek sonunda subscriber'ın R5F çekirdeği tarafından alındı!

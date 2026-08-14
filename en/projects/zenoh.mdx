@@ -150,7 +150,7 @@ version conflicts with the target's kernel.
 
 #### 3.4.1. Preparing the Build Environment
 
-First, navigate to the parent directory of your SDK:
+First, enter to the build container:
 
 ```bash
 cd [path_to_your_sdk_parent_folder]/sdk
@@ -181,14 +181,14 @@ further copying.
 
 #### 3.4.3. Compiling Linux Kernel Headers (In Build Container)
 
-Inside the `distrobox:workdir` container, directly clone the specific kernel branch to save time:
+Inside the `distrobox:workdir` container, directly clone the specific kernel branch:
 
 ```bash
 git clone --depth 1 -b v6.12.24-ti-arm64-r43-t3-gem-o1 https://github.com/t3gemstone/linux.git
 cd linux
 ```
 
-Assuming the `running.config` file is located in the `distrobox:workdir` root, run:
+(Assuming the `running.config` file is located in the `distrobox:workdir` root), run:
 
 ```bash
 cp ../running.config .config
@@ -286,7 +286,7 @@ preferred method. Deploy the following files:
 
 First, we will deploy the Zenoh R5F IPC variant firmware (in this example, the publisher will reside in the R5F core).
 
-Assuming the transferred binaries are located in your target's home directory, copy the firmware:
+(Assuming the transferred binaries are located in your target's home directory), copy the firmware:
 
 ```bash
 sudo cp z_pub.out /lib/firmware/

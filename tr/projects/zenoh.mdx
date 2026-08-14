@@ -296,12 +296,12 @@ Terminal 2'de, şunu çalıştırın:
 sudo cat /sys/kernel/debug/remoteproc/remoteproc3/trace0
 ```
 
-Şuna benzer bir çıktı görürseniz:
+Bu komut Zenoh R5F firmware loglarını gösterir. Şuna benzer bir çıktı görürseniz:
 
 ```bash
 'Hello from TI AM67A R5F!'
 ```
-tebrikler! R5F ve A53 çekirdeğiniz başarılı bir iletişim kuruyor!
+Tebrikler! R5F ve A53 çekirdeğiniz başarılı bir iletişim kuruyor!
 
 ## 4. Bölüm 2: WiFi Ağı Üzerinden Zincir Haberleşme
 
@@ -406,10 +406,10 @@ sudo ip link set rpmsg0 up
 sudo cat /sys/kernel/debug/remoteproc/remoteproc3/trace0
 ```
 
-Bu komut, Zenoh R5F firmware'lerinin loglarını gösterir. Eğer şunu görürseniz:
+Eğer şuna benzer bir çıktı görürseniz:
 
 ```
 'Hello from TI AM67A R5F!'
 ```
-tebrikler! Publisher kartınızın R5F çekirdeği bu mesajı başarıyla oluşturdu ve
+Tebrikler! Publisher kartınızın R5F çekirdeği bu mesajı başarıyla oluşturdu ve
 bu mesaj 3 Zenoh client'ı üzerinden geçerek sonunda subscriber'ın R5F çekirdeği tarafından alındı!

@@ -308,7 +308,7 @@ In Terminal 2, execute:
 sudo cat /sys/kernel/debug/remoteproc/remoteproc3/trace0
 ```
 
-If you see an output like this:
+This command shows the logs of the Zenoh R5F firmware. If you see an output like this:
 
 ```bash
 'Hello from TI AM67A R5F!'
@@ -419,11 +419,11 @@ Now we can verify if the system is working or not by running this command on the
 sudo cat /sys/kernel/debug/remoteproc/remoteproc3/trace0
 ```
 
-This command shows the logs of the Zenoh R5F firmwares. If you see:
+If you see an output like this:
 
 ```
 'Hello from TI AM67A R5F!'
 ```
 
-message in your terminal, congratulations! Your publisher board's R5F core successfully created that message
+Congratulations! Your publisher board's R5F core successfully created that message
 and that message went over 3 Zenoh clients and was finally received by the subscriber's R5F core!

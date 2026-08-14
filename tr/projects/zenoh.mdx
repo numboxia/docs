@@ -65,46 +65,11 @@ git clone https://github.com/t3gemstone/zenoh-pico
 cd zenoh-pico
 ```
 
-### 3.2. Ethernet Modu için Derleme Adımları (Host Machine Üzerinde)
-
-Bu adımlar, Zenoh'un Ethernet modu için R5F firmware binary dosyalarının nasıl derleneceğini ayrıntılı olarak anlatır.
-
-#### 3.2.1. SysConfig Dosyalarının Oluşturulması
-
-```bash
-/opt/ti/sysconfig_1.28.0/sysconfig_cli.sh \
-  -s /opt/ti/mcu_plus_sdk_j722s_11_02_01_05/.metadata/product.json \
-  -o examples/ti_am67a/syscfg \
-  examples/ti_am67a/example.syscfg
-```
-
-#### 3.2.2. CMake Yapılandırması
-
-```bash
-cmake -B build \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
-  -DCGT_TI_ARM_CLANG_PATH=/opt/ti/ti-cgt-armllvm_3.2.2.LTS \
-  -DZP_PLATFORM=ti_am67a \
-  -DBUILD_EXAMPLES=ON \
-  -DCMAKE_BUILD_TYPE=Release
-```
-
-#### 3.2.3. Derleme
-
-```bash
-cmake --build build --target examples -j$(nproc)
-```
-
-<Note>
-Ortam (environment) flag'lerinize bağlı olarak, strict compiler kurallarıyla ilgili bir warning veya error ile
-karşılaşabilirsiniz.
-</Note>
-
-### 3.3. IPC Modu için Derleme Adımları (Ana Bilgisayar Üzerinde)
+### 3.2. IPC Modu için Derleme Adımları (Ana Bilgisayar Üzerinde)
 
 Bu adımlar, Zenoh'un IPC modu için R5F firmware binary dosyalarının nasıl derleneceğini ayrıntılı olarak anlatır.
 
-#### 3.3.1. SysConfig Dosyalarının Oluşturulması
+#### 3.2.1. SysConfig Dosyalarının Oluşturulması
 
 ```bash
 /opt/ti/sysconfig_1.28.0/sysconfig_cli.sh \
@@ -113,7 +78,7 @@ Bu adımlar, Zenoh'un IPC modu için R5F firmware binary dosyalarının nasıl d
   examples/ti_am67a/example_ipc.syscfg
 ```
 
-#### 3.3.2. CMake Yapılandırması
+#### 3.2.2. CMake Yapılandırması
 
 ```bash
 cmake -B build \
@@ -125,13 +90,13 @@ cmake -B build \
   -DCMAKE_BUILD_TYPE=Release
 ```
 
-#### 3.3.3. Derleme
+#### 3.2.3. Derleme
 
 ```bash
 cmake --build build --target examples -j$(nproc)
 ```
 
-### 3.4. rpmsg_net Kernel Modüllerinin Derlenmesi (Sanal Makine İçinde)
+### 3.3. rpmsg_net Kernel Modüllerinin Derlenmesi (Konteyner İçinde)
 
 Remote Processor Messaging (rpmsg) framework'ü, Linux çalıştıran A53 çekirdeklerinin, R5F çekirdekleri gibi
 coprocessor'lerle paylaşımlı bellek üzerinden haberleşmesine olanak tanır. Daha fazla bilgi için resmi kernel
@@ -142,9 +107,9 @@ Sadece header dosyaları için modülleri doğrudan kart üzerinde derlemek çok
 tercih edilir. T3 Gemstone O1'in 6.12.24-ti kernel'inin derlendiği ortamı birebir yeniden oluşturarak, hedef kart ile
 sürüm çakışmalarının önüne geçilir.
 
-#### 3.4.1. Derleme Ortamının Hazırlanması
+#### 3.3.1. Derleme Ortamının Hazırlanması
 
-Öncelikle, sanal makinenin içine girin:
+Öncelikle, konteynerin içine girin:
 ```bash
 cd [ust_dizinin_konumu]/sdk
 devbox shell
@@ -157,7 +122,7 @@ bitbake -c devshell virtual/kernel
 Bu işlem, ilk çalıştırmada uzunca bir süre alabilir.
 </Note>
 
-#### 3.4.2. .config Dosyasının Elde Edilmesi (Hedef Kart Üzerinde)
+#### 3.3.2. .config Dosyasının Elde Edilmesi (Hedef Kart Üzerinde)
 
 Aşağıdakini T3 Gemstone O1 hedef kartı üzerinde çalıştırın:
 
@@ -168,11 +133,10 @@ zcat /proc/config.gz > running.config
 Bu komut, mevcut kernel yapılandırmasını bir `running.config` dosyasına aktarır. Bu dosyayı ana bilgisayarınıza
 aktarın (örneğin SCP, SSH veya bir USB bellek ile).
 
-Aktarım tamamlandıktan sonra, bu dosyayı SDK klasörünüzün içine kopyalayın. SDK klasörü, Distrobox sanal
-makinenize `distrobox:workdir` olarak doğrudan bağlanmıştır. Bu sayede dosya, tekrar kopyalamaya gerek
-kalmadan sanal makine içinden anında erişilebilir olur.
+Aktarım tamamlandıktan sonra, bu dosyayı SDK klasörünüzün içine kopyalayın. SDK klasörü, Distrobox konteynerinize `distrobox:workdir` olarak doğrudan bağlanmıştır. Bu sayede dosya, tekrar kopyalamaya gerek
+kalmadan konteyner içinden anında erişilebilir olur.
 
-#### 3.4.3. Linux Kernel Header Dosyalarının Derlenmesi (Sanal Makine İçinde)
+#### 3.3.3. Linux Kernel Header Dosyalarının Derlenmesi (Konteyner İçinde)
 
 `distrobox:workdir` içinde, belirli kernel branch'ini doğrudan klonlayın:
 
@@ -196,7 +160,7 @@ make ARCH=arm64 olddefconfig
 make ARCH=arm64 modules_prepare
 ```
 
-#### 3.4.4. rpmsg_net'in Derlenmesi
+#### 3.3.4. rpmsg_net'in Derlenmesi
 
 Bu komutları `distrobox:workdir` kök dizininde çalıştırın:
 
@@ -214,12 +178,12 @@ make ARCH=arm64 CROSS_COMPILE=aarch64-gemstone-linux-musl- -C /home/workdir/buil
 
 İşlem tamamlandığında, `rpmsg_net.ko` modülü oluşturulacaktır.
 
-### 3.5. Zenoh'un Linux Tarafı için Derlenmesi (Sanal Makine İçinde)
+### 3.4. Zenoh'un Linux Tarafı için Derlenmesi (Konteyner İçinde)
 
 Bu adımlar, Zenoh çalıştırılabilir dosyalarının (executable) A53 çekirdeği için nasıl çapraz derleme yapılacağını
 ayrıntılı olarak anlatır.
 
-#### 3.5.1. Multicast Buffer Ayarı
+#### 3.4.1. Multicast Buffer Ayarı
 
 IPC üzerinde packet fragmentation ve haberleşme hatalarını önlemek için, `zenoh-pico/CMakeLists.txt` içindeki bir
 yapılandırma parametresinin değiştirilmesi gerekir. Aşağıdaki satırı bulun:
@@ -232,9 +196,9 @@ set(BATCH_MULTICAST_SIZE 2048 CACHE STRING "Use this to override the maximum mul
 
 Zenoh'taki varsayılan multicast batch size 2048 byte'tır. Ancak rpmsg0 arayüzünün Maximum Transmission Unit (MTU) değeri 479 byte ile sınırlıdır (kart üzerinde 'ip a' komutu çalıştırılarak görülebilir). Batch size bu MTU değerini aşarsa, paketler düşürülür veya parçalanır. Batch size'ı 128'e indirmek, tüm veri yüklerinin MTU sınırı içine güvenle sığmasını sağlar.
 
-#### 3.5.2. CMake Yapılandırması
+#### 3.4.2. CMake Yapılandırması
 
-Bu komutları `distrobox:workdir` sanal ortamından çalıştırın:
+Bu komutları `distrobox:workdir` konteynerinde çalıştırın:
 
 ```bash
 cd zenoh-pico
@@ -250,7 +214,7 @@ cmake -B build_linux_aarch64 \
   -DZP_PLATFORM=linux
 ```
 
-#### 3.5.3. Derleme
+#### 3.4.3. Derleme
 
 ```bash
 cmake --build build_linux_aarch64 --target examples -j$(nproc)
@@ -258,7 +222,7 @@ cmake --build build_linux_aarch64 --target examples -j$(nproc)
 
 Bu komutlar, gerekli binary dosyalarını `build_linux_aarch64/examples` dizininde oluşturacaktır.
 
-### 3.6. Derlenen Binary Dosyalarının Hedefe Aktarılması (Ana Bilgisayar Üzerinde)
+### 3.5. Derlenen Binary Dosyalarının Hedefe Aktarılması (Ana Bilgisayar Üzerinde)
 
 Daha önce belirtildiği gibi, `distrobox:workdir` dizini ana bilgisayarınızdaki SDK klasörüne doğrudan bağlanmıştır. Derlenen binary dosyalarını ana bilgisayarınızda bulup SCP veya tercih ettiğiniz bir yöntemle hedef karta
 aktarabilirsiniz. Aşağıdaki dosyaları aktarın:
@@ -272,7 +236,7 @@ aktarabilirsiniz. Aşağıdaki dosyaları aktarın:
 **rpmsg_net Kernel Modülleri**
 - `rpmsg-net/rpmsg_net.ko`
 
-### 3.7. Hedef Ortamın Yapılandırılması (Hedef Kart Üzerinde)
+### 3.6. Hedef Ortamın Yapılandırılması (Hedef Kart Üzerinde)
 
 Öncelikle, Zenoh R5F IPC varyantı firmware'ini olması gereken konuma aktaracağız (bu örnekte publisher, R5F çekirdeğinde yer alacaktır).
 
@@ -316,7 +280,7 @@ sudo ip route add 224.0.0.0/4 dev rpmsg0
 
 Bu komut, tüm multicast trafiğinin (`224.0.0.0/4` IP bloğu) `rpmsg0` ağ arayüzü üzerinden yönlendirilmesini sağlar. Zenoh, IPC bağlantısı üzerinden peer-to-peer discovery için multicast'e dayanır.
 
-### 3.8. Test Etme (Hedef Kart Üzerinde)
+### 3.7. Test Etme (Hedef Kart Üzerinde)
 
 Hedef kart üzerinde iki ayrı terminal oturumu açın.
 
@@ -355,7 +319,7 @@ dizinine sahip olduğunuzu varsayarak:
 - `[ust_dizinin_konumu]/sdk/zenoh-pico/examples/ti_am67a/z_sub.c`
 - `[ust_dizinin_konumu]/sdk/zenoh-pico/examples/ti_am67a/z_pub.c`
 
-Bu dosyaları açın ve her ikisinde de şu satırların böyle olduğundan emin olun:
+Bu dosyaları açın ve her ikisinde de aşağıdaki satırların böyle olduğundan emin olun:
 
 ```c
 #define CLIENT_OR_PEER 0

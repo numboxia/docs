@@ -72,45 +72,11 @@ git clone https://github.com/t3gemstone/zenoh-pico
 cd zenoh-pico
 ```
 
-### 3.2. Build Steps for Ethernet Mode (On Host Machine)
-
-These steps detail how to compile Zenoh's R5F firmware binaries for Ethernet mode.
-
-#### 3.2.1. Generating SysConfig Files
-
-```bash
-/opt/ti/sysconfig_1.28.0/sysconfig_cli.sh \
-  -s /opt/ti/mcu_plus_sdk_j722s_11_02_01_05/.metadata/product.json \
-  -o examples/ti_am67a/syscfg \
-  examples/ti_am67a/example.syscfg
-```
-
-#### 3.2.2. CMake Configuration
-
-```bash
-cmake -B build \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/ti-arm-clang-r5f.cmake \
-  -DCGT_TI_ARM_CLANG_PATH=/opt/ti/ti-cgt-armllvm_3.2.2.LTS \
-  -DZP_PLATFORM=ti_am67a \
-  -DBUILD_EXAMPLES=ON \
-  -DCMAKE_BUILD_TYPE=Release
-```
-
-#### 3.2.3. Build
-
-```bash
-cmake --build build --target examples -j$(nproc)
-```
-
-<Note>
-You might encounter a warning or error regarding strict compiler rules depending on your environment flags.
-</Note>
-
-### 3.3. Build Steps for IPC Mode (On Host Machine)
+### 3.2. Build Steps for IPC Mode (On Host Machine)
 
 These steps detail how to compile Zenoh's R5F firmware binaries for IPC mode.
 
-#### 3.3.1. Generating SysConfig Files
+#### 3.2.1. Generating SysConfig Files
 
 ```bash
 /opt/ti/sysconfig_1.28.0/sysconfig_cli.sh \
@@ -119,7 +85,7 @@ These steps detail how to compile Zenoh's R5F firmware binaries for IPC mode.
   examples/ti_am67a/example_ipc.syscfg
 ```
 
-#### 3.3.2. CMake Configuration
+#### 3.2.2. CMake Configuration
 
 ```bash
 cmake -B build \
@@ -131,13 +97,13 @@ cmake -B build \
   -DCMAKE_BUILD_TYPE=Release
 ```
 
-#### 3.3.3. Build
+#### 3.2.3. Build
 
 ```bash
 cmake --build build --target examples -j$(nproc)
 ```
 
-### 3.4. Building rpmsg_net Kernel Modules (In Build Container)
+### 3.3. Building rpmsg_net Kernel Modules (In Build Container)
 
 The Remote Processor Messaging (rpmsg) framework allows a main processor running Linux to communicate with
 coprocessors (such as the R5F cores) via shared memory. For more details, check out the official kernel
@@ -148,7 +114,7 @@ Cross-compiling is preferred because compiling kernel modules natively on the bo
 time-prohibitive. By replicating the environment where the Gemstone O1's 6.12.24-ti kernel was compiled, we avoid
 version conflicts with the target's kernel.
 
-#### 3.4.1. Preparing the Build Environment
+#### 3.3.1. Preparing the Build Environment
 
 First, enter to the build container:
 
@@ -164,7 +130,7 @@ bitbake -c devshell virtual/kernel
 This initialization may take an extended amount of time during the first execution.
 </Note>
 
-#### 3.4.2. Obtaining the .config File (On Target Board)
+#### 3.3.2. Obtaining the .config File (On Target Board)
 
 Execute the following on the T3 Gemstone O1 target board:
 
@@ -179,7 +145,7 @@ Once transferred, copy this file into your SDK folder. The SDK folder is mounted
 environment as `distrobox:workdir`. This means the file is instantly accessible from within the container without
 further copying.
 
-#### 3.4.3. Compiling Linux Kernel Headers (In Build Container)
+#### 3.3.3. Compiling Linux Kernel Headers (In Build Container)
 
 Inside the `distrobox:workdir` container, directly clone the specific kernel branch:
 
@@ -203,7 +169,7 @@ make ARCH=arm64 olddefconfig
 make ARCH=arm64 modules_prepare
 ```
 
-#### 3.4.4. Compiling rpmsg_net
+#### 3.3.4. Compiling rpmsg_net
 
 Execute these commands in the `distrobox:workdir` root:
 
@@ -221,11 +187,11 @@ make ARCH=arm64 CROSS_COMPILE=aarch64-gemstone-linux-musl- -C /home/workdir/buil
 
 Upon completion, the `rpmsg_net.ko` module will be generated.
 
-### 3.5. Compiling Zenoh for the Linux Side (In Build Container)
+### 3.4. Compiling Zenoh for the Linux Side (In Build Container)
 
 These steps detail how to cross-compile the Zenoh executables for the A53 core.
 
-#### 3.5.1. Multicast Buffer Adjustment
+#### 3.4.1. Multicast Buffer Adjustment
 
 To prevent packet fragmentation and communication failures over IPC, a configuration parameter in
 `zenoh-pico/CMakeLists.txt` must be patched. Locate the following line:
@@ -241,7 +207,7 @@ interface is limited to 479 bytes (which can be observed by running `ip a` on th
 this MTU, packets will be dropped or fragmented. Lowering the batch size to 128 ensures all payloads fit safely
 within the MTU limit.
 
-#### 3.5.2. CMake Configuration
+#### 3.4.2. CMake Configuration
 
 Execute these commands from the `distrobox:workdir` container:
 
@@ -259,7 +225,7 @@ cmake -B build_linux_aarch64 \
   -DZP_PLATFORM=linux
 ```
 
-#### 3.5.3. Build
+#### 3.4.3. Build
 
 ```bash
 cmake --build build_linux_aarch64 --target examples -j$(nproc)
@@ -267,7 +233,7 @@ cmake --build build_linux_aarch64 --target examples -j$(nproc)
 
 These commands will generate the required binaries in the `build_linux_aarch64/examples` directory.
 
-### 3.6. Deploying Compiled Binaries to the Target (On Host)
+### 3.5. Deploying Compiled Binaries to the Target (On Host)
 
 As previously established, the `distrobox:workdir` directory is mounted directly to the SDK folder on your host
 machine. You can locate the compiled binaries on your host and transfer them to the target board via SCP or your
@@ -282,7 +248,7 @@ preferred method. Deploy the following files:
 **rpmsg_net Kernel Modules**
 - `rpmsg-net/rpmsg_net.ko`
 
-### 3.7. Configuring the Target Environment (On Target Board)
+### 3.6. Configuring the Target Environment (On Target Board)
 
 First, we will deploy the Zenoh R5F IPC variant firmware (in this example, the publisher will reside in the R5F core).
 
@@ -326,7 +292,7 @@ sudo ip route add 224.0.0.0/4 dev rpmsg0
 This command explicitly directs all multicast traffic (the `224.0.0.0/4` IP block) to be routed through the `rpmsg0`
 network interface. Zenoh relies on multicast for peer-to-peer discovery across the IPC link.
 
-### 3.8. Testing (On Target Board)
+### 3.7. Testing (On Target Board)
 
 Open two separate terminal sessions on the target board.
 
